@@ -56,7 +56,7 @@ error () {
     exit "$2"
 }
 
-while getopts 's:v:L:l:m:t:s:F:i:I:f:nND' opt; do
+while getopts 's:v:L:M:l:m:t:s:F:i:I:f:nND' opt; do
     case $opt in
         L)
             [[ $OPTARG =~ ^[0-9]+%?$ ]] || error "${opt}: ${OPTARG} is not a number" 2
@@ -68,6 +68,11 @@ while getopts 's:v:L:l:m:t:s:F:i:I:f:nND' opt; do
             ;;
         m)
             MESSAGE="${OPTARG}"
+            ;;
+
+        M)
+            [[ $OPTARG =~ ^[0-9]+%?$ ]] || error "${opt}: ${OPTARG} is not a number" 2
+            MAX_LIMIT="${OPTARG}"
             ;;
         n)
             USE_NOTIFY_SEND="y"
@@ -147,6 +152,11 @@ is_battery_discharging() {
     return 1
 } >/dev/null
 
+is_battery_charging() {
+    grep STATUS=Charging "${BATTERIES[@]}" && return 0
+    return 1
+} >/dev/null
+
 get_battery_perc() {
     awk -f <(get_awk_source) "${BATTERIES[@]}"
 }
@@ -173,7 +183,7 @@ show_notify(){
     fi
     [[ -n $NOTIFY_ICON ]] && NOTIFY_OPT="-i ${NOTIFY_ICON}"
     # shellcheck disable=SC2086
-    notify-send -u critical "${1}" ${NOTIFY_OPT}
+    notify-send -u "${2:-critical}" "${1}" ${NOTIFY_OPT}
 }
 
 play_sound(){
@@ -185,7 +195,7 @@ play_sound(){
 show_message(){
     play_sound &
     if [[ -n $USE_NOTIFY_SEND ]] && which notify-send; then
-        show_notify "$1"
+        show_notify "$1" "normal"
     elif [[ -z $DONT_USE_WISH ]] && which wish; then
         show_popup "$1"
     else
@@ -202,7 +212,9 @@ main (){
     UPPER_LIMIT="${UPPER_LIMIT:-10}"
     UPPER_HALF=$(( UPPER_LIMIT / 2 ))
     LOWER_LIMIT=${LOWER_LIMIT:-$UPPER_HALF}
+    MAX_LIMIT=${MAX_LIMIT:-98} 
     MESSAGE="${MESSAGE:-Warning: Battery is getting low}"
+    MAX_MESSAGE="${MAX_MESSAGE:-Warning: Battery is fully charged}"
     SLEEP_TIME="${SLEEP_TIME:-5m}"
     # Note: BATTERIES is an array
     if ls /sys/class/power_supply/BAT*/uevent > /dev/null 2>&1; then
@@ -215,7 +227,7 @@ main (){
     fi
     SOUND_VOLUME="${SOUND_VOLUME:-65536}"
 
-    debug "Upper ${UPPER_LIMIT}; Lower ${LOWER_LIMIT}; sleep ${SLEEP_TIME}"
+    debug "Upper ${UPPER_LIMIT}; Lower ${LOWER_LIMIT}; sleep ${SLEEP_TIME}; max limit ${MAX_LIMIT}"
     debug "Current: $(get_battery_perc)%"
     [[ -n $SOUND_TO_PLAY ]] && debug "Playing: \"${SOUND_TO_PLAY}\", Volume: ${SOUND_VOLUME_PERC}%"
 
@@ -250,6 +262,17 @@ main (){
                    LIMIT=$(( PERC - INTERVAL ))
                 fi
             fi
+
+        elif is_battery_charging; then
+            debug "Battery is charging"
+
+            if [[ $PERC -gt $MAX_LIMIT ]]; then
+                debug "showing warning"
+                show_message "${MAX_MESSAGE}"
+            else
+                LIMIT=0
+            fi
+
         else
             # restart messages, reset limits
             POPUP_CLICKED=""
